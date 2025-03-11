@@ -67,11 +67,13 @@ def visualize_results(original_image, field_mask, player_boxes, team_labels, bal
     result_image = original_rgb.copy()
     
     # Draw player bounding boxes and team labels
-    for i, (x, y, w, h) in enumerate(player_boxes):
-        color = (0, 0, 255) if team_labels[i] == 0 else (255, 0, 0)  # Red for team A, Blue for team B
-        cv2.rectangle(result_image, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(result_image, f"Team {'A' if team_labels[i] == 0 else 'B'}", 
-                   (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    if player_boxes and len(player_boxes) > 0:
+        for i, (x, y, w, h) in enumerate(player_boxes):
+            if i < len(team_labels):  # Make sure we have a team label for this player
+                color = (0, 0, 255) if team_labels[i] == 0 else (255, 0, 0)  # Red for team A, Blue for team B
+                cv2.rectangle(result_image, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(result_image, f"Team {'A' if team_labels[i] == 0 else 'B'}", 
+                           (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     
     # Draw ball position
     if ball_position is not None:

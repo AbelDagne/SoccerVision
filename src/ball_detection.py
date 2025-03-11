@@ -228,7 +228,7 @@ def detect_ball_color(image, field_mask=None, debug=False):
     
     return ball_position
 
-def detect_ball(image, method='hough', field_mask=None, debug=False):
+def detect_ball(image, field_mask=None, debug=False):
     """
     Detect the soccer ball in an image using the specified method.
     
@@ -242,9 +242,4 @@ def detect_ball(image, method='hough', field_mask=None, debug=False):
         tuple: Ball position (x, y) or None if not found.
         dict (optional): Dictionary containing intermediate results for debugging.
     """
-    if method.lower() == 'hough':
-        return detect_ball_hough(image, field_mask, debug)
-    elif method.lower() == 'color':
-        return detect_ball_color(image, field_mask, debug)
-    else:
-        raise ValueError(f"Unknown ball detection method: {method}") 
+    return detect_ball_color(image, field_mask, debug)

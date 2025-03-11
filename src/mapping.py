@@ -7,7 +7,7 @@ from the image plane to a 2D top-down view using homography.
 
 import cv2
 import numpy as np
-from utils import draw_field_lines
+from src.utils import draw_field_lines
 
 def compute_homography(src_points, dst_points):
     """
@@ -95,7 +95,7 @@ def map_to_2d(image, field_mask, player_boxes, team_labels, ball_position, debug
         dict (optional): Dictionary containing intermediate results for debugging.
     """
     # Import field detection functions here to avoid circular imports
-    from field_detection import find_field_corners, detect_field_lines
+    from src.field_detection import find_field_corners, detect_field_lines
     
     # Detect field lines
     field_lines = detect_field_lines(image, field_mask)

@@ -11,12 +11,12 @@ import cv2
 import numpy as np
 import time
 
-from utils import load_image, save_image, visualize_results
-from field_detection import detect_field_hsv, detect_field_edges, detect_field_lines
-from player_detection import detect_players
-from team_classification import classify_teams
-from ball_detection import detect_ball
-from mapping import map_to_2d
+from src.utils import load_image, save_image, visualize_results
+from src.field_detection import detect_field_hsv, detect_field_edges, detect_field_lines
+from src.player_detection import detect_players
+from src.team_classification import classify_teams
+from src.ball_detection import detect_ball
+from src.mapping import map_to_2d
 
 def process_image(image_path, output_dir, debug=False, player_detection_method='hog', 
                  field_detection_method='hsv', ball_detection_method='hough'):
@@ -95,12 +95,20 @@ def process_image(image_path, output_dir, debug=False, player_detection_method='
     print("Step 3: Classifying teams...")
     start_time = time.time()
     
-    if debug:
-        team_labels, team_debug = classify_teams(image, player_boxes, debug=True)
-        # Save team classification debug images
-        save_image(team_debug['team_image'], os.path.join(output_dir, f"{base_filename}_team_classification.jpg"))
+    # Check if any players were detected
+    if len(player_boxes) > 0:
+        if debug:
+            team_labels, team_debug = classify_teams(image, player_boxes, debug=True)
+            # Save team classification debug images
+            save_image(team_debug['team_image'], os.path.join(output_dir, f"{base_filename}_team_classification.jpg"))
+        else:
+            team_labels = classify_teams(image, player_boxes)
     else:
-        team_labels = classify_teams(image, player_boxes)
+        # If no players were detected, create an empty team_labels list
+        team_labels = []
+        if debug:
+            # Create a dummy debug info
+            team_debug = {'team_image': image.copy()}
     
     team_classification_time = time.time() - start_time
     print(f"Team classification completed in {team_classification_time:.2f} seconds")
@@ -129,16 +137,28 @@ def process_image(image_path, output_dir, debug=False, player_detection_method='
     start_time = time.time()
     
     try:
-        if debug:
-            top_down_view, mapping_debug = map_to_2d(image, field_mask, player_boxes, team_labels, ball_position, debug=True)
-            # Save mapping debug images
-            save_image(mapping_debug['corners_image'], os.path.join(output_dir, f"{base_filename}_field_corners.jpg"))
-            save_image(mapping_debug['field_template'], os.path.join(output_dir, f"{base_filename}_field_template.jpg"))
+        # Only attempt mapping if players were detected
+        if len(player_boxes) > 0:
+            if debug:
+                top_down_view, mapping_debug = map_to_2d(image, field_mask, player_boxes, team_labels, ball_position, debug=True)
+                # Save mapping debug images
+                save_image(mapping_debug['corners_image'], os.path.join(output_dir, f"{base_filename}_field_corners.jpg"))
+                save_image(mapping_debug['field_template'], os.path.join(output_dir, f"{base_filename}_field_template.jpg"))
+            else:
+                top_down_view = map_to_2d(image, field_mask, player_boxes, team_labels, ball_position)
+            
+            # Save the 2D mapping
+            save_image(top_down_view, os.path.join(output_dir, f"{base_filename}_2d_mapping.jpg"))
         else:
-            top_down_view = map_to_2d(image, field_mask, player_boxes, team_labels, ball_position)
-        
-        # Save the 2D mapping
-        save_image(top_down_view, os.path.join(output_dir, f"{base_filename}_2d_mapping.jpg"))
+            # If no players were detected, create a dummy top-down view
+            from src.utils import draw_field_lines
+            field_width = 105  # meters
+            field_height = 68  # meters
+            scale = 10  # pixels per meter
+            top_down_view = np.zeros((int(field_height * scale), int(field_width * scale), 3), dtype=np.uint8)
+            top_down_view = draw_field_lines(top_down_view, scale)
+            save_image(top_down_view, os.path.join(output_dir, f"{base_filename}_2d_mapping.jpg"))
+            print("No players detected, creating empty 2D mapping")
         
         mapping_time = time.time() - start_time
         print(f"2D mapping completed in {mapping_time:.2f} seconds")
@@ -177,10 +197,11 @@ def process_image(image_path, output_dir, debug=False, player_detection_method='
         
         # Draw player bounding boxes and team labels
         for i, (x, y, w, h) in enumerate(player_boxes):
-            color = (0, 0, 255) if team_labels[i] == 0 else (255, 0, 0)
-            cv2.rectangle(result_image, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(result_image, f"Team {'A' if team_labels[i] == 0 else 'B'}", 
-                       (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            if i < len(team_labels):  # Make sure we have a team label for this player
+                color = (0, 0, 255) if team_labels[i] == 0 else (255, 0, 0)
+                cv2.rectangle(result_image, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(result_image, f"Team {'A' if team_labels[i] == 0 else 'B'}", 
+                           (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         # Draw ball position
         if ball_position is not None:
