@@ -1,0 +1,7 @@
+setuptools
+wheel
+numpy
+opencv-python
+scikit-learn
+matplotlib
+scipy 
