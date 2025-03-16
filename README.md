@@ -1,57 +1,44 @@
-# SoccerVision
+# SoccerVision: Player Detection and Team Classification
 
-Automated Player and Ball Detection for Soccer Analytics
+An implementation of computer vision algorithms for soccer player detection and team classification.
 
 ## Overview
 
-SoccerVision is a computer vision tool that processes soccer game images to automatically:
-1. Detect players on the field
-2. Classify teams using jersey color
-3. Identify the ball
-4. Generate a 2D top-down mapping of the game from the input image
+## Technical Approach
 
-## Setup
+### 1. Player Detection
+We use a custom implementation of Canny edge detection and contour finding:
 
-1. Clone this repository
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+- **Grayscale Conversion & Blurring**: Convert to grayscale and apply Gaussian blur to reduce noise
+- **Edge Detection**: Apply Canny edge detector to find boundaries
+- **Field Masking**: Segment the green field using HSV color thresholding
+- **Contour Finding**: Extract contours from non-field areas that likely represent players
+- **Size Filtering**: Filter contours by area to identify player regions
+- **Non-Maximum Suppression**: Remove overlapping detections
 
-## Usage
+### 2. Team Classification
+We use color-based segmentation with a custom clustering implementation:
 
-```python
-# Basic usage
-python src/main.py --image path/to/soccer_image.jpg --output path/to/output_directory
-```
+- **Color Extraction**: Extract dominant colors from player regions in HSV color space
+- **Histogram Analysis**: Create histograms of hue values to identify jersey colors
+- **Custom Clustering**: Implement a custom binary clustering algorithm to separate teams
+- **Team Assignment**: Assign each player to one of two teams based on jersey color
 
-### Optional Arguments
+## Implementation Details
 
-- `--debug`: Enable debug mode to visualize intermediate steps
-- `--model`: Choose player detection model (hog or yolo, default: hog)
-- `--field_method`: Choose field detection method (hsv or edge, default: hsv)
+### Key Components
+1. **Player Detection Module**: Implements Canny edge detection and contour-based player detection
+2. **Team Classification Module**: Implements custom color-based team classification
+3. **Utilities**: Helper functions for loading, processing, and visualizing images
 
-## Project Structure
+### Core Algorithms
+1. **Player Detection**:
+   - Canny edge detection to find boundaries
+   - Color-based field segmentation
+   - Contour extraction for player identification
+   - Non-maximum suppression to clean up overlapping detections
 
-- `src/`: Source code
-  - `main.py`: Main entry point
-  - `field_detection.py`: Field detection and segmentation
-  - `player_detection.py`: Player detection
-  - `team_classification.py`: Team classification
-  - `ball_detection.py`: Ball detection
-  - `mapping.py`: 2D mapping and visualization
-  - `utils.py`: Utility functions
-- `data/`: Input data directory
-- `output/`: Output directory for results
-
-## Example
-
-Input image:
-![Input Image](docs/example_input.jpg)
-
-Output 2D mapping:
-![Output Mapping](docs/example_output.jpg)
-
-## License
-
-MIT 
+2. **Color-based Team Classification**:
+   - HSV color space analysis of player regions
+   - Histogram-based dominant color extraction
+   - Custom binary clustering algorithm (similar to k-means but without external libraries)
