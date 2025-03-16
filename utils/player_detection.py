@@ -37,56 +37,96 @@ def detect_players_with_canny_and_contours(image, threshold=0.3):
     # 1. Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # 2. Apply Gaussian blur to reduce noise (from HW1)
+    # 2. Apply Gaussian blur to reduce noise
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # 3. Apply Canny edge detector (from HW1 and HW2)
+    # 3. Apply Canny edge detector
     # Automatically compute lower and upper thresholds
     median_intensity = np.median(blurred)
     lower_threshold = int(max(0, (1.0 - threshold) * median_intensity))
     upper_threshold = int(min(255, (1.0 + threshold) * median_intensity))
     edges = cv2.Canny(blurred, lower_threshold, upper_threshold)
     
-    # 4. Extract field mask using color segmentation (from HW1 color segmentation techniques)
+    # 4. Extract field mask using color segmentation
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     
     # Define green color range for soccer field
-    lower_green = np.array([35, 30, 30])
-    upper_green = np.array([85, 255, 255])
+    lower_green = np.array([30, 25, 25])
+    upper_green = np.array([90, 255, 255])
     
     # Create a mask for the field (green areas)
     field_mask = cv2.inRange(hsv, lower_green, upper_green)
     
-    # 5. Get non-field areas to find potential players
-    player_mask = cv2.bitwise_not(field_mask)
+    # Apply morphological operations to clean up the field mask
+    field_kernel = np.ones((5, 5), np.uint8)
+    field_mask = cv2.morphologyEx(field_mask, cv2.MORPH_CLOSE, field_kernel, iterations=2)
+    field_mask = cv2.morphologyEx(field_mask, cv2.MORPH_OPEN, field_kernel, iterations=1)
     
-    # 6. Combine edge information with player mask
+    # Fill holes in the field mask
+    field_mask_floodfill = field_mask.copy()
+    h, w = field_mask.shape[:2]
+    mask = np.zeros((h+2, w+2), np.uint8)
+    cv2.floodFill(field_mask_floodfill, mask, (0, 0), 255)
+    field_mask_inv = cv2.bitwise_not(field_mask_floodfill)
+    field_mask = field_mask | field_mask_inv
+    
+    # 5. Find the largest contour in the field mask, which should be the playing field
+    field_contours, _ = cv2.findContours(field_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if field_contours:
+        # Sort contours by area and get the largest one
+        field_contours = sorted(field_contours, key=cv2.contourArea, reverse=True)
+        largest_field_contour = field_contours[0]
+        
+        # Create a binary mask for the largest field contour
+        field_contour_mask = np.zeros_like(field_mask)
+        cv2.drawContours(field_contour_mask, [largest_field_contour], 0, 255, -1)
+        
+        # Update field mask to use only the largest contour
+        field_mask = field_contour_mask
+    
+    # 6. Find potential player candidates on the field
+    # Extract non-green areas within the field (potential players)
+    player_mask = cv2.bitwise_not(cv2.inRange(hsv, lower_green, upper_green))
+    
+    # Only consider candidates that are within the field
+    player_mask = cv2.bitwise_and(player_mask, field_mask)
+    
+    # 7. Combine edge information with player mask to get more precise boundaries
     combined_mask = cv2.bitwise_and(edges, player_mask)
     
-    # 7. Morphological operations to clean up the mask
+    # 8. Morphological operations to clean up the mask
     kernel = np.ones((3, 3), np.uint8)
     combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
     combined_mask = cv2.erode(combined_mask, kernel, iterations=1)
-    combined_mask = cv2.dilate(combined_mask, kernel, iterations=3)
+    combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
     
-    # 8. Find contours (from HW2 techniques)
+    # 9. Find contours
     contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # 9. Filter contours by size to identify players
+    # 10. Filter contours by size and aspect ratio to identify players
     player_boxes = []
     for contour in contours:
         area = cv2.contourArea(contour)
         
         # Filter by size - adjust for soccer field aerial view
-        if 50 < area < 5000:
+        if 100 < area < 3000:
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Ensure minimum size
-            if w > 5 and h > 5:
-                player_boxes.append((x, y, w, h))
+            # Check aspect ratio - players are usually taller than they are wide
+            aspect_ratio = float(h) / w if w > 0 else 0
+            if 0.5 <= aspect_ratio <= 3.0 and w > 5 and h > 10:
+                # Check if the bounding box is mostly inside the field mask
+                box_mask = np.zeros_like(field_mask)
+                cv2.rectangle(box_mask, (x, y), (x + w, y + h), 255, -1)
+                overlap = cv2.bitwise_and(box_mask, field_mask)
+                overlap_area = cv2.countNonZero(overlap)
+                
+                # Only keep the box if at least 60% is inside the field
+                if overlap_area > 0.6 * (w * h):
+                    player_boxes.append((x, y, w, h))
     
-    # 10. Apply non-maximum suppression 
-    final_boxes = non_maximum_suppression(player_boxes, 0.2)
+    # 11. Apply non-maximum suppression with stricter overlap threshold
+    final_boxes = non_maximum_suppression(player_boxes, 0.3)  # Increased overlap threshold
     
     return final_boxes
 
