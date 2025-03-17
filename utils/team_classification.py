@@ -33,24 +33,65 @@ def extract_jersey_color(image, player_box):
         # Return a default color if ROI is empty
         return (0, 0, 0, 0, 0)
     
-    # Convert to HSV for better color analysis (technique from HW1/HW4)
+    # Convert to HSV for better color analysis
     hsv_roi = cv2.cvtColor(player_roi, cv2.COLOR_BGR2HSV)
     
-    # Compute average HSV values (this will be more robust)
-    avg_h = np.mean(hsv_roi[:,:,0])
-    avg_s = np.mean(hsv_roi[:,:,1]) 
-    avg_v = np.mean(hsv_roi[:,:,2])
+    # For aerial view, focus more on the center of the player blob
+    # This helps avoid including field pixels in the jersey color
+    center_y = h // 2
+    center_x = w // 2
+    center_roi_size = min(w, h) // 2
     
-    # For aerial view, we use the whole player blob
-    # Compute histogram for color analysis (technique from HW4)
-    hist_h = cv2.calcHist([hsv_roi], [0], None, [180], [0, 180])
-    hist_s = cv2.calcHist([hsv_roi], [1], None, [256], [0, 256])
+    # Extract center region (more likely to be jersey)
+    start_y = max(0, center_y - center_roi_size)
+    end_y = min(h, center_y + center_roi_size)
+    start_x = max(0, center_x - center_roi_size)
+    end_x = min(w, center_x + center_roi_size)
     
-    # Find dominant hue and saturation
-    dominant_h = np.argmax(hist_h)
-    dominant_s = np.argmax(hist_s)
+    center_roi = hsv_roi[start_y:end_y, start_x:end_x]
     
-    # Return a more comprehensive set of color features
+    if center_roi.size == 0:
+        # Fall back to using the whole ROI if center extraction failed
+        center_roi = hsv_roi
+    
+    # Create a mask to filter out green (field) pixels
+    lower_green = np.array([30, 40, 40])
+    upper_green = np.array([90, 255, 255])
+    green_mask = cv2.inRange(center_roi, lower_green, upper_green)
+    non_green_mask = cv2.bitwise_not(green_mask)
+    
+    # Apply the mask to focus on non-green pixels (likely jersey colors)
+    masked_roi = cv2.bitwise_and(center_roi, center_roi, mask=non_green_mask)
+    
+    # Count non-zero pixels to ensure we have enough data
+    non_zero_pixels = cv2.countNonZero(non_green_mask)
+    
+    if non_zero_pixels > 10:
+        # Calculate average HSV on non-green pixels
+        non_zero_indices = np.where(non_green_mask > 0)
+        avg_h = np.mean(center_roi[non_zero_indices[0], non_zero_indices[1], 0])
+        avg_s = np.mean(center_roi[non_zero_indices[0], non_zero_indices[1], 1])
+        avg_v = np.mean(center_roi[non_zero_indices[0], non_zero_indices[1], 2])
+        
+        # Compute histogram for non-green pixels
+        hist_h = cv2.calcHist([center_roi], [0], non_green_mask, [180], [0, 180])
+        hist_s = cv2.calcHist([center_roi], [1], non_green_mask, [256], [0, 256])
+        
+        # Find dominant hue and saturation
+        dominant_h = np.argmax(hist_h)
+        dominant_s = np.argmax(hist_s)
+    else:
+        # Fall back to whole ROI if not enough non-green pixels
+        avg_h = np.mean(hsv_roi[:,:,0])
+        avg_s = np.mean(hsv_roi[:,:,1])
+        avg_v = np.mean(hsv_roi[:,:,2])
+        
+        hist_h = cv2.calcHist([hsv_roi], [0], None, [180], [0, 180])
+        hist_s = cv2.calcHist([hsv_roi], [1], None, [256], [0, 256])
+        
+        dominant_h = np.argmax(hist_h)
+        dominant_s = np.argmax(hist_s)
+    
     return (avg_h, avg_s, avg_v, dominant_h, dominant_s)
 
 def classify_teams(image, player_boxes):
@@ -70,27 +111,76 @@ def classify_teams(image, player_boxes):
     # Extract jersey colors for all players
     jersey_colors = [extract_jersey_color(image, box) for box in player_boxes]
     
-    # Create feature vectors using average hue and saturation (more stable)
-    # We're combining both average and dominant values for better classification
-    feature_vectors = np.array([(color[0], color[1]) for color in jersey_colors])
+    # Create feature vectors using multiple color attributes for better robustness
+    # We'll use both hue and saturation from average and dominant values
+    feature_vectors = np.array([
+        (color[0], color[1], color[3], color[4]) for color in jersey_colors
+    ])
     
-    # We'll use a more robust clustering algorithm
-    # that considers distribution of colors
-    team_labels = improved_binary_clustering(feature_vectors)
+    # Weight features to emphasize hue more than saturation
+    weights = np.array([1.5, 0.8, 1.0, 0.5])
+    weighted_features = feature_vectors * weights
     
-    # Debug information (uncomment if needed)
-    # print("Feature vectors:", feature_vectors)
-    # print("Team labels:", team_labels)
-    # print("Team A count:", len(team_labels) - sum(team_labels))
-    # print("Team B count:", sum(team_labels)) 
+    # Use DBSCAN clustering which can automatically determine the number of clusters
+    # and is more robust to noise
+    try:
+        from sklearn.cluster import DBSCAN
+        
+        # Normalize features for DBSCAN
+        if len(weighted_features) > 0:
+            # Avoid division by zero by adding a small epsilon
+            feature_range = np.max(weighted_features, axis=0) - np.min(weighted_features, axis=0)
+            feature_range = np.maximum(feature_range, 1e-10)
+            norm_features = (weighted_features - np.min(weighted_features, axis=0)) / feature_range
+            
+            # Apply DBSCAN clustering
+            db = DBSCAN(eps=0.3, min_samples=2).fit(norm_features)
+            cluster_labels = db.labels_
+            
+            # Count number of clusters found (excluding noise points labeled as -1)
+            n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+            
+            # If DBSCAN found exactly 2 clusters, use them
+            if n_clusters == 2:
+                # Convert DBSCAN labels (-1, 0, 1) to binary labels (0, 1)
+                # First, handle noise points by assigning them to the nearest cluster
+                noise_indices = np.where(cluster_labels == -1)[0]
+                valid_clusters = np.unique(cluster_labels[cluster_labels != -1])
+                
+                for idx in noise_indices:
+                    # Find distances to each valid cluster center
+                    distances = []
+                    for cluster in valid_clusters:
+                        cluster_points = norm_features[cluster_labels == cluster]
+                        cluster_center = np.mean(cluster_points, axis=0)
+                        distance = np.linalg.norm(norm_features[idx] - cluster_center)
+                        distances.append((cluster, distance))
+                    
+                    # Assign to nearest cluster
+                    nearest_cluster = min(distances, key=lambda x: x[1])[0]
+                    cluster_labels[idx] = nearest_cluster
+                
+                # Convert to binary labels (0, 1)
+                return [0 if label == valid_clusters[0] else 1 for label in cluster_labels]
+            
+            # If not exactly 2 clusters, fall back to our binary clustering
+            team_labels = improved_binary_clustering(feature_vectors)
+            return team_labels
+            
+    except (ImportError, Exception) as e:
+        # Fall back to our binary clustering if DBSCAN unavailable
+        pass
     
-    # If classification is too unbalanced, try manual median-based approach
+    # Use improved binary clustering as fallback
+    team_labels = improved_binary_clustering(feature_vectors[:, :2])  # Use only the first two features
+    
+    # Check if the results are balanced
     team_a_count = len(team_labels) - sum(team_labels)
     team_b_count = sum(team_labels)
     min_expected = len(team_labels) * 0.2  # Expect at least 20% of players in each team
     
     if team_a_count < min_expected or team_b_count < min_expected:
-        # Fall back to median-based classification if clustering gave unbalanced results
+        # Fall back to manual thresholding if clustering gave unbalanced results
         return classify_teams_manual_threshold(image, player_boxes)
     
     return team_labels
@@ -174,13 +264,33 @@ def classify_teams_manual_threshold(image, player_boxes):
     # Extract jersey colors for all players
     jersey_colors = [extract_jersey_color(image, box) for box in player_boxes]
     
-    # Use average hue values instead of just dominant ones
-    hue_values = [color[0] for color in jersey_colors]
+    # Use both average and dominant hue values for more robustness
+    avg_hue_values = [color[0] for color in jersey_colors]
+    dominant_hue_values = [color[3] for color in jersey_colors]
     
-    # Compute the median hue
-    median_hue = np.median(hue_values)
+    # Use k-means clustering instead of simple median thresholding
+    try:
+        from sklearn.cluster import KMeans
+        
+        # Combine average and dominant hue into feature vector
+        features = np.column_stack((avg_hue_values, dominant_hue_values))
+        
+        # Apply k-means clustering with 2 clusters
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(features)
+        team_labels = kmeans.labels_
+        
+        # Ensure team A (label 0) has more players than team B (label 1) if possible
+        if np.sum(team_labels == 0) < np.sum(team_labels == 1):
+            team_labels = 1 - team_labels  # Flip labels
+            
+        return team_labels.tolist()
+        
+    except (ImportError, Exception) as e:
+        # Fall back to simpler approach if k-means is not available
+        pass
     
-    # Classify based on hue relative to median
-    team_labels = [0 if hue < median_hue else 1 for hue in hue_values]
+    # Simple median-based classification as fallback
+    median_hue = np.median(avg_hue_values)
+    team_labels = [0 if hue < median_hue else 1 for hue in avg_hue_values]
     
     return team_labels 

@@ -74,28 +74,30 @@ def visualize_results(image, player_boxes, team_labels, output_path=None):
         color = team_a_color if team_label == 0 else team_b_color
         team_name = "Team A" if team_label == 0 else "Team B"
         
-        # Draw a thicker rectangle around player for better visibility
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 3)
+        # Make rectangle lines thinner (reduced from 3 to 1)
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 1)
         
-        # Draw a filled rectangle for the team label background for better readability
-        label_bg_color = (0, 0, 200, 0.7) if team_label == 0 else (200, 0, 0, 0.7)
-        text_size = cv2.getTextSize(team_name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-        cv2.rectangle(overlay, 
-                     (x, y - 25), 
-                     (x + text_size[0] + 10, y), 
-                     color, 
-                     -1)  # Filled rectangle
+        # Use a smaller font size and more compact label
+        # Draw a smaller colored dot instead of a filled rectangle for team indicator
+        dot_radius = 4
+        dot_center = (x + dot_radius + 2, y + dot_radius + 2)
+        cv2.circle(overlay, dot_center, dot_radius, color, -1)
         
-        # Draw team label with white text for better contrast
-        cv2.putText(overlay, team_name, (x + 5, y - 8), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Add player number next to dot with smaller font
+        # player_label = f"#{i+1}"
+        # cv2.putText(overlay, player_label, 
+        #            (x + 2*dot_radius + 4, y + dot_radius + 5), 
+        #            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        # Draw player number
-        cv2.putText(overlay, f"#{i+1}", (x + w - 20, y + h - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Draw team indicator with smaller font at the bottom of the box
+        # Only if the box is large enough
+        # if h > 30:  # Only add team label for larger boxes
+        #     small_font_size = 0.35
+        #     cv2.putText(overlay, team_name, (x + 2, y + h - 5), 
+        #               cv2.FONT_HERSHEY_SIMPLEX, small_font_size, color, 1)
     
     # Blend overlay with original image for semi-transparency
-    alpha = 0.7  # Transparency factor
+    alpha = 0.8  # Increased alpha for better visibility but less intrusive
     cv2.addWeighted(overlay, alpha, visualization, 1 - alpha, 0, visualization)
     
     # Draw summary at the bottom of image
@@ -103,14 +105,21 @@ def visualize_results(image, player_boxes, team_labels, output_path=None):
     team_b_count = sum(team_labels)
     summary_text = f"Detected: {len(player_boxes)} players (Team A: {team_a_count}, Team B: {team_b_count})"
     
-    # Put text at the bottom of the image
-    cv2.rectangle(visualization, 
-                 (10, visualization.shape[0] - 40), 
-                 (10 + len(summary_text)*10, visualization.shape[0] - 10), 
-                 (0, 0, 0), 
-                 -1)  # Black background
-    cv2.putText(visualization, summary_text, (15, visualization.shape[0] - 20), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # Put text at the bottom of the image with smaller, cleaner overlay
+    font_scale = 0.5
+    text_size = cv2.getTextSize(summary_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)[0]
+    
+    # Semi-transparent black background for text
+    overlay_h = 25  # Fixed height for overlay
+    overlay_rect = visualization[visualization.shape[0] - overlay_h:, :].copy()
+    black_rect = np.zeros_like(overlay_rect)
+    cv2.addWeighted(black_rect, 0.6, overlay_rect, 0.4, 0, overlay_rect)
+    visualization[visualization.shape[0] - overlay_h:, :] = overlay_rect
+    
+    # Add text on semi-transparent background
+    cv2.putText(visualization, summary_text, 
+               (10, visualization.shape[0] - 10), 
+               cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1)
     
     # Save the visualization if output path is provided
     if output_path:

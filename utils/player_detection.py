@@ -43,16 +43,17 @@ def detect_players_with_canny_and_contours(image, threshold=0.3):
     # 3. Apply Canny edge detector
     # Automatically compute lower and upper thresholds
     median_intensity = np.median(blurred)
-    lower_threshold = int(max(0, (1.0 - threshold) * median_intensity))
-    upper_threshold = int(min(255, (1.0 + threshold) * median_intensity))
+    # Lower the lower threshold and increase the upper threshold for better edge detection
+    lower_threshold = int(max(0, (1.0 - threshold * 1.2) * median_intensity))
+    upper_threshold = int(min(255, (1.0 + threshold * 1.2) * median_intensity))
     edges = cv2.Canny(blurred, lower_threshold, upper_threshold)
     
     # 4. Extract field mask using color segmentation
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     
-    # Define green color range for soccer field
-    lower_green = np.array([30, 25, 25])
-    upper_green = np.array([90, 255, 255])
+    # Define green color range for soccer field - wider range to include more variations
+    lower_green = np.array([25, 20, 20])
+    upper_green = np.array([95, 255, 255])
     
     # Create a mask for the field (green areas)
     field_mask = cv2.inRange(hsv, lower_green, upper_green)
@@ -96,7 +97,7 @@ def detect_players_with_canny_and_contours(image, threshold=0.3):
     
     # 8. Morphological operations to clean up the mask
     kernel = np.ones((3, 3), np.uint8)
-    combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
+    combined_mask = cv2.dilate(combined_mask, kernel, iterations=5)  # Increased iterations for better connection
     combined_mask = cv2.erode(combined_mask, kernel, iterations=1)
     combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
     
@@ -108,25 +109,25 @@ def detect_players_with_canny_and_contours(image, threshold=0.3):
     for contour in contours:
         area = cv2.contourArea(contour)
         
-        # Filter by size - adjust for soccer field aerial view
-        if 100 < area < 3000:
+        # Filter by size - adjusted thresholds for soccer field aerial view
+        if 50 < area < 5000:  # Lowered minimum area and increased maximum
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Check aspect ratio - players are usually taller than they are wide
+            # Check aspect ratio - made more lenient to catch more players
             aspect_ratio = float(h) / w if w > 0 else 0
-            if 0.5 <= aspect_ratio <= 3.0 and w > 5 and h > 10:
+            if 0.4 <= aspect_ratio <= 4.0 and w > 3 and h > 8:  # More permissive criteria
                 # Check if the bounding box is mostly inside the field mask
                 box_mask = np.zeros_like(field_mask)
                 cv2.rectangle(box_mask, (x, y), (x + w, y + h), 255, -1)
                 overlap = cv2.bitwise_and(box_mask, field_mask)
                 overlap_area = cv2.countNonZero(overlap)
                 
-                # Only keep the box if at least 60% is inside the field
-                if overlap_area > 0.6 * (w * h):
+                # Only keep the box if at least 50% is inside the field (reduced threshold)
+                if overlap_area > 0.5 * (w * h):
                     player_boxes.append((x, y, w, h))
     
-    # 11. Apply non-maximum suppression with stricter overlap threshold
-    final_boxes = non_maximum_suppression(player_boxes, 0.3)  # Increased overlap threshold
+    # 11. Apply non-maximum suppression with a lower overlap threshold to keep more players
+    final_boxes = non_maximum_suppression(player_boxes, 0.2)  # Decreased overlap threshold
     
     return final_boxes
 
@@ -156,21 +157,20 @@ def non_maximum_suppression(boxes, overlap_threshold):
     # Compute area of each box
     area = w * h
     
-    # Sort by bottom-right y-coordinate
-    indices = np.argsort(y + h)
+    # Sort by area (larger boxes often contain players completely)
+    indices = np.argsort(area)[::-1]
     
     keep = []
     while len(indices) > 0:
-        # Pick the last box (highest y + h)
-        last = len(indices) - 1
-        i = indices[last]
+        # Pick the largest box
+        i = indices[0]
         keep.append(i)
         
         # Find boxes with significant overlap
-        xx1 = np.maximum(x[i], x[indices[:last]])
-        yy1 = np.maximum(y[i], y[indices[:last]])
-        xx2 = np.minimum(x[i] + w[i], x[indices[:last]] + w[indices[:last]])
-        yy2 = np.minimum(y[i] + h[i], y[indices[:last]] + h[indices[:last]])
+        xx1 = np.maximum(x[i], x[indices[1:]])
+        yy1 = np.maximum(y[i], y[indices[1:]])
+        xx2 = np.minimum(x[i] + w[i], x[indices[1:]] + w[indices[1:]])
+        yy2 = np.minimum(y[i] + h[i], y[indices[1:]] + h[indices[1:]])
         
         # Compute width and height of overlapping area
         w_overlap = np.maximum(0, xx2 - xx1)
@@ -178,10 +178,13 @@ def non_maximum_suppression(boxes, overlap_threshold):
         
         # Compute overlap ratio
         overlap_area = w_overlap * h_overlap
-        overlap_ratio = overlap_area / area[indices[:last]]
+        overlap_ratio = np.zeros(len(indices) - 1)
+        valid_indices = (area[indices[1:]] > 0)
+        if np.any(valid_indices):
+            overlap_ratio[valid_indices] = overlap_area[valid_indices] / area[indices[1:]][valid_indices]
         
         # Find indices of boxes to remove
-        to_delete = np.concatenate(([last], np.where(overlap_ratio > overlap_threshold)[0]))
+        to_delete = np.concatenate(([0], np.where(overlap_ratio > overlap_threshold)[0] + 1))
         
         # Update indices
         indices = np.delete(indices, to_delete)
