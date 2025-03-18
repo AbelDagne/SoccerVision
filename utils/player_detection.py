@@ -106,34 +106,58 @@ def detect_players_with_canny_and_contours(image, threshold=0.3):
     
     # 10. Filter contours by size and aspect ratio to identify players
     player_boxes = []
+    
+    # Find the maximum area of all contours to set a relative size threshold
+    max_area = 0
+    max_dimension = 0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > max_area:
+            max_area = area
+        x, y, w, h = cv2.boundingRect(contour)
+        max_dim = max(w, h)
+        if max_dim > max_dimension:
+            max_dimension = max_dim
+    
+    # Set a minimum area threshold relative to the maximum area
+    # This helps adapt to different image scales
+    min_area_threshold = max(150, max_area * 0.05)  # At least 5% of the max area or 150px
+    min_dimension_threshold = max(10, max_dimension * 0.15)  # At least 15% of the max dimension or 10px
+    
     for contour in contours:
         area = cv2.contourArea(contour)
         
-        # Filter by size - adjusted thresholds for soccer field aerial view
-        if 50 < area < 5000:  # Lowered minimum area and increased maximum
+        # Filter by size - using more aggressive minimum thresholds
+        if area > min_area_threshold and area < 8000:  # Increased minimum area and maximum
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Check aspect ratio - made more lenient to catch more players
+            # Check if either width or height is large enough
+            larger_dimension = max(w, h)
+            if larger_dimension < min_dimension_threshold:
+                continue
+                
+            # Check aspect ratio - prefer more square-like shapes for players seen from above
             aspect_ratio = float(h) / w if w > 0 else 0
-            if 0.4 <= aspect_ratio <= 4.0 and w > 3 and h > 8:  # More permissive criteria
+            if 0.5 <= aspect_ratio <= 3.0 and w > 5 and h > 5:  # Stricter aspect ratio criteria
                 # Check if the bounding box is mostly inside the field mask
                 box_mask = np.zeros_like(field_mask)
                 cv2.rectangle(box_mask, (x, y), (x + w, y + h), 255, -1)
                 overlap = cv2.bitwise_and(box_mask, field_mask)
                 overlap_area = cv2.countNonZero(overlap)
                 
-                # Only keep the box if at least 50% is inside the field (reduced threshold)
-                if overlap_area > 0.5 * (w * h):
+                # Only keep the box if at least 60% is inside the field (increased threshold)
+                if overlap_area > 0.6 * (w * h):
                     player_boxes.append((x, y, w, h))
     
-    # 11. Apply non-maximum suppression with a lower overlap threshold to keep more players
-    final_boxes = non_maximum_suppression(player_boxes, 0.2)  # Decreased overlap threshold
+    # 11. Apply non-maximum suppression with a higher overlap threshold to remove redundant boxes
+    final_boxes = non_maximum_suppression(player_boxes, 0.3)  # Increased overlap threshold
     
     return final_boxes
 
 def non_maximum_suppression(boxes, overlap_threshold):
     """
     Apply non-maximum suppression to remove overlapping boxes.
+    Prioritizes boxes with larger maximum dimension (width or height).
     
     Args:
         boxes (list): List of bounding boxes in the format [(x, y, w, h), ...].
@@ -154,15 +178,22 @@ def non_maximum_suppression(boxes, overlap_threshold):
     w = boxes_array[:, 2]
     h = boxes_array[:, 3]
     
-    # Compute area of each box
+    # Get the larger dimension (width or height) for each box
+    max_dimension = np.maximum(w, h)
+    
+    # Also compute area as a secondary sorting metric
     area = w * h
     
-    # Sort by area (larger boxes often contain players completely)
-    indices = np.argsort(area)[::-1]
+    # Create a combined score that prioritizes larger dimension but also considers area
+    # This gives preference to boxes with at least one large dimension
+    score = max_dimension * 2 + np.sqrt(area)
+    
+    # Sort by score (boxes with larger dimension first)
+    indices = np.argsort(score)[::-1]
     
     keep = []
     while len(indices) > 0:
-        # Pick the largest box
+        # Pick the box with the largest score
         i = indices[0]
         keep.append(i)
         
