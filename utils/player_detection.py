@@ -6,21 +6,102 @@ This module implements player detection using techniques covered in class.
 
 import cv2
 import numpy as np
+import os
 
-def detect_players(image, threshold=0.3, method="custom"):
+def detect_players(image, threshold=0.3, visualize_steps=False):
     """
-    Detect players in an image using color-based segmentation approach.
+    Detect players in a soccer image using Canny edge detection and contour finding.
     
     Args:
         image (numpy.ndarray): Input image in BGR format.
         threshold (float): Threshold for edge detection.
-        method (str): Detection method - can be ignored, always using custom implementation
+        visualize_steps (bool): Whether to visualize intermediate steps.
         
     Returns:
-        list: List of player bounding boxes in the format [(x, y, w, h), ...].
+        list: List of player bounding boxes in the format (x, y, w, h).
     """
-    # Implementation using techniques from class
-    return detect_players_with_canny_and_contours(image, threshold)
+    # Create output directory for visualization if needed
+    if visualize_steps:
+        vis_dir = "edge_detection_steps"
+        os.makedirs(vis_dir, exist_ok=True)
+    
+    # Step 1: Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if visualize_steps:
+        cv2.imwrite(f"{vis_dir}/01_grayscale.jpg", gray)
+    
+    # Step 2: Apply Gaussian blur
+    blurred = cv2.GaussianBlur(gray, (5, 5), 3)
+    if visualize_steps:
+        cv2.imwrite(f"{vis_dir}/02_gaussian_blur.jpg", blurred)
+    
+    # Step 3: Calculate gradients with Sobel (for visualization)
+    if visualize_steps:
+        sobelx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+        sobelx = cv2.convertScaleAbs(sobelx)
+        sobely = cv2.convertScaleAbs(sobely)
+        gradient_magnitude = cv2.addWeighted(sobelx, 0.5, sobely, 0.5, 0)
+        cv2.imwrite(f"{vis_dir}/03_gradient_magnitude.jpg", gradient_magnitude)
+    
+    # Step 4: Apply Canny edge detection
+    lower_threshold = int(threshold * 100)
+    upper_threshold = lower_threshold * 3
+    edges = cv2.Canny(blurred, lower_threshold, upper_threshold)
+    if visualize_steps:
+        cv2.imwrite(f"{vis_dir}/04_canny_edges.jpg", edges)
+    
+    # Step 5: Create field mask using HSV thresholding
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    # Green field mask
+    lower_green = np.array([30, 40, 40])
+    upper_green = np.array([90, 255, 255])
+    field_mask = cv2.inRange(hsv_image, lower_green, upper_green)
+    # Invert to get non-field mask
+    non_field_mask = cv2.bitwise_not(field_mask)
+    if visualize_steps:
+        cv2.imwrite(f"{vis_dir}/05_field_mask.jpg", field_mask)
+        cv2.imwrite(f"{vis_dir}/06_non_field_mask.jpg", non_field_mask)
+    
+    # Step 6: Combine edge detection with field mask
+    player_edges = cv2.bitwise_and(edges, edges, mask=non_field_mask)
+    if visualize_steps:
+        cv2.imwrite(f"{vis_dir}/07_player_edges.jpg", player_edges)
+    
+    # Step 7: Find contours
+    contours, _ = cv2.findContours(player_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Step 8: Create visualization of contours
+    if visualize_steps:
+        contour_vis = image.copy()
+        cv2.drawContours(contour_vis, contours, -1, (0, 255, 0), 2)
+        cv2.imwrite(f"{vis_dir}/08_contours.jpg", contour_vis)
+    
+    # Step 9: Filter contours by size and create bounding boxes
+    player_boxes = []
+    min_area = 200  # Minimum contour area to be considered a player
+    max_area = 5000  # Maximum contour area to filter out large regions
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if min_area < area < max_area:
+            x, y, w, h = cv2.boundingRect(contour)
+            # Filter based on aspect ratio to avoid elongated shapes
+            aspect_ratio = float(w) / h
+            if 0.3 < aspect_ratio < 3.0:
+                player_boxes.append((x, y, w, h))
+    
+    # Step 10: Apply non-maximum suppression
+    final_boxes = non_maximum_suppression(player_boxes, 0.3)  # Increased overlap threshold
+    
+    # Step 11: Create final visualization with bounding boxes
+    if visualize_steps:
+        final_vis = image.copy()
+        for x, y, w, h in final_boxes:
+            cv2.rectangle(final_vis, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        cv2.imwrite(f"{vis_dir}/09_final_detection.jpg", final_vis)
+    
+    return final_boxes
 
 def detect_players_with_canny_and_contours(image, threshold=0.3):
     """

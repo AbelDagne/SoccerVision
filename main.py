@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from utils import load_image, visualize_results, detect_players, classify_teams
 
-def process_image(image_path, output_path=None, show_results=True, threshold=0.3):
+def process_image(image_path, output_path=None, show_results=True, threshold=0.3, visualize_steps=False):
     """
     Process a soccer image to detect players and classify teams.
     
@@ -20,6 +20,7 @@ def process_image(image_path, output_path=None, show_results=True, threshold=0.3
         output_path (str, optional): Path to save the output visualization.
         show_results (bool): Whether to display the results.
         threshold (float): Threshold for edge detection.
+        visualize_steps (bool): Whether to visualize intermediate steps of edge detection.
         
     Returns:
         tuple: (player_boxes, team_labels)
@@ -30,7 +31,7 @@ def process_image(image_path, output_path=None, show_results=True, threshold=0.3
     
     # Step 1: Detect players
     print(f"Step 1: Detecting players using Canny edge detection and contour finding...")
-    player_boxes = detect_players(image, threshold)
+    player_boxes = detect_players(image, threshold, visualize_steps=visualize_steps)
     print(f"Detected {len(player_boxes)} players.")
     
     # Step 2: Classify teams
@@ -65,6 +66,7 @@ def main():
     parser.add_argument("--output", "-o", help="Path to save the output visualization")
     parser.add_argument("--threshold", "-t", type=float, default=0.3, help="Threshold for edge detection")
     parser.add_argument("--no-display", action="store_true", help="Do not display the results")
+    parser.add_argument("--visualize-steps", action="store_true", help="Visualize edge detection steps")
     
     args = parser.parse_args()
     
@@ -73,7 +75,8 @@ def main():
         args.image_path,
         args.output,
         not args.no_display,
-        args.threshold
+        args.threshold,
+        args.visualize_steps
     )
 
 if __name__ == "__main__":
